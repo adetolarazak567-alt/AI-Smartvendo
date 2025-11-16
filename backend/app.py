@@ -1,150 +1,155 @@
-# app.py
-import os
-from flask import Flask, request, jsonify
-import requests
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
+import os
+from dotenv import load_dotenv
+import openai
 
+# ----------------------
+# Load Environment
+# ----------------------
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+
+openai.api_key = OPENAI_API_KEY
+
+# ----------------------
+# App Setup
+# ----------------------
 app = Flask(__name__)
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "SUPER_SECRET_KEY")
 CORS(app)
 
-OPENROUTER_KEY = os.environ.get("OPENROUTER_KEY")
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+# ----------------------
+# Dummy Admin Credentials
+# ----------------------
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "youremail@example.com")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "YourSecurePassword123")
 
-if not OPENROUTER_KEY:
-    # It's okay to run locally without key for testing, but endpoints will error
-    app.logger.warning("OPENROUTER_KEY not set. Set it in environment before production.")
+# ----------------------
+# Free Trial Tracking (in-memory)
+# ----------------------
+trials = {
+    "copywriting": 3,
+    "freelance": 3,
+    "resume": 3,
+    "business": 3
+}
 
-def call_ai(prompt, model="gpt-3.5-turbo", max_tokens=900):
-    """Call OpenRouter and return assistant text (raises on HTTP error)."""
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": "You are a concise, professional assistant that produces content optimized for the user's request."},
-            {"role": "user", "content": prompt}
-        ],
-        "max_tokens": max_tokens
-    }
-    resp = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    # safety: try several shapes
-    return data.get("choices", [{}])[0].get("message", {}).get("content") or data.get("result") or ""
-
-# -------------------------
-# Endpoints for services
-# -------------------------
-
-@app.route("/generate/copywriting", methods=["POST"])
-def generate_copywriting():
-    body = request.json or {}
-    product = body.get("product") or body.get("topic")
-    tone = body.get("tone", "persuasive and professional")
-    length = body.get("length", "short")  # short / medium / long
-
-    if not product:
-        return jsonify({"error":"No product/topic provided"}), 400
-
-    prompt = (
-        f"Create {length} marketing copy for: {product}\n"
-        f"Tone: {tone}\n\n"
-        "Include:\n- 3 headline options\n- 2 short ad captions (max 120 chars)\n- 1 longer product description (3-4 sentences)\n- Suggested CTA (one line)"
-    )
-
+# ----------------------
+# Helper: OpenAI request
+# ----------------------
+def generate_ai(prompt):
     try:
-        out = call_ai(prompt)
-        return jsonify({"copy": out})
+        response = openai.ChatCompletion.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+            max_tokens=500
+        )
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return f"Error: {str(e)}"
 
-@app.route("/generate/freelance", methods=["POST"])
-def generate_freelance():
-    body = request.json or {}
-    platform = body.get("platform", "Upwork/Fiverr")
-    gig = body.get("gig") or body.get("service")
-    brief = body.get("brief", "")
+# ----------------------
+# ADMIN LOGIN
+# ----------------------
+@app.route("/admin-login", methods=["POST"])
+def admin_login():
+    data = request.get_json()
+    email = data.get("email")
+    password = data.get("password")
+    if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
+        session["admin_logged_in"] = True
+        return jsonify({"status": "success"})
+    return jsonify({"status": "error", "error": "Invalid email or password"}), 401
 
-    if not gig:
-        return jsonify({"error":"No gig/service provided"}), 400
+@app.route("/admin-dashboard", methods=["GET"])
+def admin_dashboard():
+    if session.get("admin_logged_in"):
+        return "<h1>Welcome Admin!</h1><p>Here is your admin panel.</p>"
+    return "Unauthorized", 401
 
+# ----------------------
+# USER TRIALS
+# ----------------------
+@app.route("/user-trials", methods=["GET"])
+def user_trials():
+    paid = session.get("paid", False)
+    return jsonify({"trials": trials, "paid": paid})
+
+# ----------------------
+# PAYMENTS (dummy for now)
+# ----------------------
+@app.route("/paypal-init", methods=["POST"])
+def paypal_init():
+    data = request.get_json()
+    amount = data.get("amount")
+    # Here you would integrate actual PayPal SDK/API
+    session["paid"] = True
+    return jsonify({"status": "success", "redirect_url": "https://www.paypal.com/checkout"})
+
+@app.route("/crypto-init", methods=["POST"])
+def crypto_init():
+    # Placeholder for crypto payments
+    session["paid"] = True
+    return jsonify({"status": "success", "redirect_url": "https://nowpayments.io/checkout"})
+
+# ----------------------
+# VENDING MACHINE ENDPOINTS
+# ----------------------
+@app.route("/copywriting", methods=["POST"])
+def copywriting():
+    if trials["copywriting"] <= 0 and not session.get("paid"):
+        return jsonify({"error": "Free trials finished! Subscribe to continue."}), 403
+    data = request.get_json()
+    prompt = f"Generate a {data.get('copy_type')} for '{data.get('name')}' in a {data.get('tone')} tone."
+    result_text = generate_ai(prompt)
+    if not session.get("paid"):
+        trials["copywriting"] -= 1
+    return jsonify({"result": result_text})
+
+@app.route("/freelance", methods=["POST"])
+def freelance():
+    if trials["freelance"] <= 0 and not session.get("paid"):
+        return jsonify({"error": "Free trials finished! Subscribe to continue."}), 403
+    data = request.get_json()
     prompt = (
-        f"Write an optimized freelance proposal for {platform} for this service: {gig}\n"
-        f"Include a 1-sentence hook, a 3-paragraph proposal (short), and 3 bullet points of portfolio/examples. "
-        f"User brief: {brief}"
+        f"Write a {data.get('level')} freelance proposal for {data.get('job_type')} "
+        f"on {data.get('platform')}."
     )
+    result_text = generate_ai(prompt)
+    if not session.get("paid"):
+        trials["freelance"] -= 1
+    return jsonify({"result": result_text})
 
-    try:
-        out = call_ai(prompt)
-        return jsonify({"proposal": out})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/generate/resume", methods=["POST"])
-def generate_resume():
-    body = request.json or {}
-    info = body.get("info")  # plain text describing user: role, experience, skills, achievements
-    role = body.get("target_role", "")
-
-    if not info:
-        return jsonify({"error":"No user info provided"}), 400
-
+@app.route("/resume", methods=["POST"])
+def resume():
+    if trials["resume"] <= 0 and not session.get("paid"):
+        return jsonify({"error": "Free trials finished! Subscribe to continue."}), 403
+    data = request.get_json()
     prompt = (
-        f"Using the following user info, produce a professional resume summary (3-5 bullet achievements), "
-        f"a tailored work-experience bullet list for a target role: {role} (if provided), and a short LinkedIn headline + summary.\n\n"
-        f"User info:\n{info}\n\nFormat clearly with headings: SUMMARY, EXPERIENCE HIGHLIGHTS, LINKEDIN HEADLINE, LINKEDIN SUMMARY."
+        f"Optimize a {data.get('purpose')} with experience: {data.get('experience')}, "
+        f"skills: {data.get('skills')}, job title: {data.get('job_title')}."
     )
+    result_text = generate_ai(prompt)
+    if not session.get("paid"):
+        trials["resume"] -= 1
+    return jsonify({"result": result_text})
 
-    try:
-        out = call_ai(prompt)
-        return jsonify({"resume": out})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+@app.route("/business", methods=["POST"])
+def business():
+    if trials["business"] <= 0 and not session.get("paid"):
+        return jsonify({"error": "Free trials finished! Subscribe to continue."}), 403
+    data = request.get_json()
+    prompt = f"Generate a {data.get('output')} for the niche '{data.get('niche')}'."
+    result_text = generate_ai(prompt)
+    if not session.get("paid"):
+        trials["business"] -= 1
+    return jsonify({"result": result_text})
 
-@app.route("/generate/business", methods=["POST"])
-def generate_business():
-    body = request.json or {}
-    niche = body.get("niche") or body.get("topic")
-    if not niche:
-        return jsonify({"error":"No niche/topic provided"}), 400
-
-    prompt = (
-        f"Generate 10 business or side-hustle ideas for the niche: {niche}. "
-        "For each idea give: a one-line description, target customer, three monetization channels, and a 3-step launch plan."
-    )
-
-    try:
-        out = call_ai(prompt, max_tokens=1200)
-        return jsonify({"ideas": out})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/generate/social", methods=["POST"])
-def generate_social():
-    body = request.json or {}
-    platform = body.get("platform", "instagram")
-    topic = body.get("topic")
-    tone = body.get("tone", "engaging")
-    if not topic:
-        return jsonify({"error":"No topic provided"}), 400
-
-    prompt = (
-        f"For {platform}, create: 5 post caption ideas (short), 10 relevant hashtags, 3 short story prompts, "
-        f"and a weekly posting schedule (3 posts/week) for the topic: {topic}. Tone: {tone}."
-    )
-
-    try:
-        out = call_ai(prompt)
-        return jsonify({"social": out})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# health-check
-@app.route("/ping", methods=["GET"])
-def ping():
-    return jsonify({"status":"ok"})
-
+# ----------------------
+# RUN APP
+# ----------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
