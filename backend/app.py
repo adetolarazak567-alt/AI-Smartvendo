@@ -41,7 +41,7 @@ trials = {
 # ----------------------
 def generate_ai(prompt):
     try:
-        response = openai.ChatCompletion.create(
+        response = openai.chat.completions.create(
             model=OPENAI_MODEL,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7,
@@ -85,13 +85,11 @@ def user_trials():
 def paypal_init():
     data = request.get_json()
     amount = data.get("amount")
-    # Here you would integrate actual PayPal SDK/API
     session["paid"] = True
     return jsonify({"status": "success", "redirect_url": "https://www.paypal.com/checkout"})
 
 @app.route("/crypto-init", methods=["POST"])
 def crypto_init():
-    # Placeholder for crypto payments
     session["paid"] = True
     return jsonify({"status": "success", "redirect_url": "https://nowpayments.io/checkout"})
 
