@@ -37,7 +37,7 @@ trials = {
 }
 
 # ----------------------
-# Helper: OpenAI request
+# Helper: OpenAI request (new syntax)
 # ----------------------
 def generate_ai(prompt):
     try:
@@ -79,7 +79,7 @@ def user_trials():
     return jsonify({"trials": trials, "paid": paid})
 
 # ----------------------
-# PAYMENTS (dummy for now)
+# PAYMENTS (dummy placeholders)
 # ----------------------
 @app.route("/paypal-init", methods=["POST"])
 def paypal_init():
